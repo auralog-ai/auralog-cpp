@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(auralog-cpp VERSION 0.1.0 LANGUAGES CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 option(AURALOG_BUILD_TESTS "Build Auralog C++ tests" ON)
 option(AURALOG_BUILD_EXAMPLES "Build Auralog C++ examples" ON)
+option(AURALOG_ENABLE_SANITIZERS "Build with address and undefined behavior sanitizers" OFF)
 
 include(FetchContent)
 
@@ -29,6 +32,14 @@ target_include_directories(auralog
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(auralog PUBLIC nlohmann_json::nlohmann_json CURL::libcurl)
+
+if(AURALOG_ENABLE_SANITIZERS)
+  if(MSVC)
+    message(FATAL_ERROR "AURALOG_ENABLE_SANITIZERS is not supported with MSVC")
+  endif()
+  target_compile_options(auralog PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(auralog PUBLIC -fsanitize=address,undefined)
+endif()
 
 if(AURALOG_BUILD_EXAMPLES)
   add_executable(auralog_basic examples/basic.cpp)

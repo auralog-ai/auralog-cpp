@@ -15,4 +15,5 @@ All notable changes to `auralog-cpp` are documented here. Format follows
 - `nlohmann::json` metadata with global metadata and supplier support.
 - Optional `std::set_terminate` capture.
 - CMake package target and local clang test script.
-
+- Project API key is intentionally sent in the request body as `projectApiKey`, matching the
+  Auralog ingest wire format used by the other SDKs.

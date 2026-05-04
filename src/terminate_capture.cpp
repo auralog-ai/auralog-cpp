@@ -1,7 +1,7 @@
 #include <auralog/auralog.hpp>
-
-#include <exception>
+#include <chrono>
 #include <cstdlib>
+#include <exception>
 #include <memory>
 #include <mutex>
 
@@ -15,7 +15,7 @@ std::terminate_handler previous_handler = nullptr;
 void auralog_terminate_handler() {
   if (auto client = terminate_client.lock()) {
     client->fatal("process terminated", {{"source", "cpp_terminate"}});
-    client->flush();
+    client->shutdown_for(std::chrono::milliseconds{1000});
   }
   if (previous_handler != nullptr) {
     previous_handler();

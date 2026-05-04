@@ -1,8 +1,7 @@
-#include <auralog/curl_transport.hpp>
-
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <auralog/curl_transport.hpp>
 #include <iostream>
 #include <mutex>
 
@@ -23,6 +22,13 @@ std::string trim_endpoint(std::string endpoint) {
 CurlTransport::CurlTransport(Config config) : config_(std::move(config)) {
   config_.endpoint = trim_endpoint(config_.endpoint);
   std::call_once(curl_init_once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+  curl_ = curl_easy_init();
+}
+
+CurlTransport::~CurlTransport() {
+  if (curl_ != nullptr) {
+    curl_easy_cleanup(curl_);
+  }
 }
 
 SendResult CurlTransport::send_batch(const std::vector<LogEntry>& entries) {
@@ -39,29 +45,30 @@ SendResult CurlTransport::send_single(const LogEntry& entry) {
 }
 
 SendResult CurlTransport::post_json(const std::string& path, const nlohmann::json& body) {
-  CURL* curl = curl_easy_init();
-  if (curl == nullptr) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (curl_ == nullptr) {
     return SendResult::RetryableFailure;
   }
 
+  curl_easy_reset(curl_);
   const auto url = config_.endpoint + path;
   const auto payload = body.dump();
   struct curl_slist* headers = nullptr;
   headers = curl_slist_append(headers, "Content-Type: application/json");
 
-  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload.size()));
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(config_.http_timeout.count()));
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(config_.http_timeout.count()));
-  curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl_, CURLOPT_POSTFIELDS, payload.c_str());
+  curl_easy_setopt(curl_, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload.size()));
+  curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT_MS,
+                   static_cast<long>(config_.http_timeout.count()));
+  curl_easy_setopt(curl_, CURLOPT_TIMEOUT_MS, static_cast<long>(config_.http_timeout.count()));
+  curl_easy_setopt(curl_, CURLOPT_NOSIGNAL, 1L);
 
-  const CURLcode code = curl_easy_perform(curl);
+  const CURLcode code = curl_easy_perform(curl_);
   long status = 0;
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+  curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &status);
   curl_slist_free_all(headers);
-  curl_easy_cleanup(curl);
 
   if (code != CURLE_OK) {
     std::cerr << "auralog: libcurl delivery failure: " << curl_easy_strerror(code) << '\n';
@@ -79,4 +86,3 @@ SendResult CurlTransport::post_json(const std::string& path, const nlohmann::jso
 }
 
 }  // namespace auralog
-

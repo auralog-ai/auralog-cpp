@@ -45,7 +45,7 @@ int main() {
 | `retry_initial_delay` | `1000ms` | Initial retry delay |
 | `retry_max_delay` | `30000ms` | Maximum retry delay |
 | `http_timeout` | `30000ms` | libcurl connect/total request timeout |
-| `shutdown_timeout` | `2000ms` | Deterministic shutdown budget |
+| `shutdown_timeout` | `2000ms` | Default budget for `flush()`, `shutdown()`, and destructor cleanup |
 | `trace_id` | generated | Trace ID attached to every log |
 | `global_metadata` | none | Static metadata merged into every log |
 | `global_metadata_supplier` | none | Callable metadata supplier, invoked per log |
@@ -55,12 +55,17 @@ int main() {
 
 - `debug`, `info`, and `warn` logs batch to `/v1/logs`.
 - `error` and `fatal` logs are prioritized to `/v1/logs/single`.
-- `flush()` drains all pending queues synchronously.
+- `flush()` drains queued and in-flight logs synchronously until `shutdown_timeout`; use
+  `flush_for(timeout)` to choose a different budget.
 - 4xx ingest responses are permanent failures and are not retried.
 - 5xx and network failures retry up to `max_retry_attempts`.
-- `shutdown()` waits for the worker and then drains pending queues.
-- libcurl connect/request timeout bounds in-flight network work.
-- `Drop` is best-effort; call `shutdown()` in short-lived programs.
+- `shutdown()` waits for the worker and then drains pending queues using `shutdown_timeout`.
+- libcurl connect/request timeout bounds in-flight network work. If shutdown starts while the
+  worker is inside libcurl, elapsed shutdown time can include up to one `http_timeout`.
+- Destructor cleanup is best-effort; call `shutdown()` in short-lived programs.
+- `auralog::init(config)` throws if a global client is already initialized.
+- The project API key is sent in the JSON body as `projectApiKey`, matching the other Auralog
+  SDKs and ingest wire format.
 
 ## Metadata
 
@@ -83,7 +88,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+`CMAKE_EXPORT_COMPILE_COMMANDS` is enabled by default for clangd and other IDEs.
+
 This repository also includes `scripts/test-local.sh`, which compiles with `clang++` directly for environments where CMake is unavailable.
+
+The CMake target builds a static library by default. Windows DLL consumers should add symbol
+visibility/export annotations in their integration until a shared-library package is published.
 
 ## Documentation
 

@@ -8,18 +8,19 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
-
-#include <nlohmann/json.hpp>
 
 namespace auralog {
 
 enum class LogLevel { Debug, Info, Warn, Error, Fatal };
 
 std::string to_string(LogLevel level);
+std::string level_name(LogLevel level);
 
 struct LogEntry {
   LogLevel level;
@@ -80,6 +81,7 @@ class Client : public std::enable_shared_from_this<Client> {
            std::optional<std::string> stack_trace = std::nullopt);
 
   void flush();
+  void flush_for(std::chrono::milliseconds timeout);
   void shutdown();
   void shutdown_for(std::chrono::milliseconds timeout);
 
@@ -115,9 +117,10 @@ class Client : public std::enable_shared_from_this<Client> {
   std::condition_variable cv_;
   std::deque<QueuedEntry> batch_queue_;
   std::deque<QueuedEntry> single_queue_;
+  std::size_t in_flight_count_ = 0;
   bool stopped_ = false;
   bool worker_done_ = false;
-  bool warned_failure_ = false;
+  std::unordered_set<std::string> warnings_;
   std::thread worker_;
 };
 

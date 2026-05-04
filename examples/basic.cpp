@@ -1,5 +1,4 @@
 #include <auralog/auralog.hpp>
-
 #include <cstdlib>
 #include <iostream>
 
@@ -17,4 +16,3 @@ int main() {
   std::cout << "sent example logs\n";
   return 0;
 }
-

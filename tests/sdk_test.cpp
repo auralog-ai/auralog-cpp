@@ -1,14 +1,25 @@
+#include <atomic>
 #include <auralog/auralog.hpp>
-
-#include <cassert>
 #include <chrono>
+#include <condition_variable>
+#include <cstdlib>
+#include <iostream>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 using namespace std::chrono_literals;
 
 namespace {
+
+#define CHECK(expr)                                                                      \
+  do {                                                                                   \
+    if (!(expr)) {                                                                       \
+      std::cerr << "CHECK failed: " #expr " at " << __FILE__ << ':' << __LINE__ << '\n'; \
+      std::exit(1);                                                                      \
+    }                                                                                    \
+  } while (false)
 
 class RecordingTransport final : public auralog::Transport {
  public:
@@ -43,6 +54,50 @@ class RecordingTransport final : public auralog::Transport {
   std::size_t result_index_ = 0;
 };
 
+class BlockingTransport final : public auralog::Transport {
+ public:
+  auralog::SendResult send_batch(const std::vector<auralog::LogEntry>& entries) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    batches.push_back(entries);
+    return auralog::SendResult::Success;
+  }
+
+  auralog::SendResult send_single(const auralog::LogEntry& entry) override {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      singles.push_back(entry);
+      entered = true;
+    }
+    cv.notify_all();
+
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv.wait(lock, [this] { return release; });
+    return auralog::SendResult::Success;
+  }
+
+  void wait_until_entered() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv.wait(lock, [this] { return entered; });
+  }
+
+  void release_send() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      release = true;
+    }
+    cv.notify_all();
+  }
+
+  std::vector<std::vector<auralog::LogEntry>> batches;
+  std::vector<auralog::LogEntry> singles;
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable cv;
+  bool entered = false;
+  bool release = false;
+};
+
 auralog::Config config() {
   auralog::Config cfg;
   cfg.api_key = "aura_test";
@@ -62,14 +117,14 @@ void test_wire_format() {
   client->error("failed", {{"reason", "declined"}});
   client->flush();
 
-  assert(transport->batches.size() == 1);
-  assert(transport->singles.size() == 1);
+  CHECK(transport->batches.size() == 1);
+  CHECK(transport->singles.size() == 1);
   auto wire = transport->batches[0][0].to_wire();
-  assert(wire["level"] == "info");
-  assert(wire["environment"] == "test");
-  assert(wire["metadata"]["service"] == "checkout");
-  assert(wire["metadata"]["order_id"] == "ord_1");
-  assert(wire["timestamp"].get<std::string>().back() == 'Z');
+  CHECK(wire["level"] == "info");
+  CHECK(wire["environment"] == "test");
+  CHECK(wire["metadata"]["service"] == "checkout");
+  CHECK(wire["metadata"]["order_id"] == "ord_1");
+  CHECK(wire["timestamp"].get<std::string>().back() == 'Z');
   client->shutdown();
 }
 
@@ -86,19 +141,40 @@ void test_flush_drains_all_batches() {
   for (const auto& batch : transport->batches) {
     total += batch.size();
   }
-  assert(transport->batches.size() == 3);
-  assert(total == 120);
+  CHECK(transport->batches.size() == 3);
+  CHECK(total == 120);
+  client->shutdown();
+}
+
+void test_flush_waits_for_in_flight_send() {
+  auto transport = std::make_shared<BlockingTransport>();
+  auto cfg = config();
+  cfg.shutdown_timeout = 1s;
+  auto client = auralog::Client::create(cfg, transport);
+  client->error("in flight", {});
+  transport->wait_until_entered();
+
+  std::atomic<bool> flushed{false};
+  std::thread flushing([&] {
+    client->flush();
+    flushed = true;
+  });
+  std::this_thread::sleep_for(20ms);
+  CHECK(!flushed.load());
+  transport->release_send();
+  flushing.join();
+  CHECK(flushed.load());
+  CHECK(transport->singles.size() == 1);
   client->shutdown();
 }
 
 void test_retry_and_permanent_failure() {
-  auto retrying = std::make_shared<RecordingTransport>(
-      std::vector<auralog::SendResult>{auralog::SendResult::RetryableFailure,
-                                       auralog::SendResult::Success});
+  auto retrying = std::make_shared<RecordingTransport>(std::vector<auralog::SendResult>{
+      auralog::SendResult::RetryableFailure, auralog::SendResult::Success});
   auto client = auralog::Client::create(config(), retrying);
   client->info("retry", {});
   client->flush();
-  assert(retrying->batches.size() == 2);
+  CHECK(retrying->batches.size() == 2);
   client->shutdown();
 
   auto permanent = std::make_shared<RecordingTransport>(
@@ -106,7 +182,7 @@ void test_retry_and_permanent_failure() {
   auto client2 = auralog::Client::create(config(), permanent);
   client2->error("bad auth", {});
   client2->flush();
-  assert(permanent->singles.size() == 1);
+  CHECK(permanent->singles.size() == 1);
   client2->shutdown();
 }
 
@@ -119,15 +195,15 @@ void test_queue_trim_and_scalar_metadata() {
     client->info("trim", {{"index", i}});
   }
   client->flush();
-  assert(transport->batches[0].size() == 2);
-  assert(transport->batches[0][0].metadata.value()["index"] == 3);
-  assert(transport->batches[0][1].metadata.value()["index"] == 4);
+  CHECK(transport->batches[0].size() == 2);
+  CHECK(transport->batches[0][0].metadata.value()["index"] == 3);
+  CHECK(transport->batches[0][1].metadata.value()["index"] == 4);
 
   auto transport2 = std::make_shared<RecordingTransport>();
   auto client2 = auralog::Client::create(config(), transport2);
   client2->info("scalar", "hello");
   client2->flush();
-  assert(transport2->batches[0][0].metadata.value()["value"] == "hello");
+  CHECK(transport2->batches[0][0].metadata.value()["value"] == "hello");
   client->shutdown();
   client2->shutdown();
 }
@@ -144,10 +220,10 @@ void test_runtime_updates_and_validation() {
   client->set_global_metadata({{{"service", "two"}}});
   client->info("second", {});
   client->flush();
-  assert(transport->batches[0][0].trace_id == "trace-one");
-  assert(transport->batches[0][0].metadata.value()["service"] == "one");
-  assert(transport->batches[1][0].trace_id == "trace-two");
-  assert(transport->batches[1][0].metadata.value()["service"] == "two");
+  CHECK(transport->batches[0][0].trace_id == "trace-one");
+  CHECK(transport->batches[0][0].metadata.value()["service"] == "one");
+  CHECK(transport->batches[1][0].trace_id == "trace-two");
+  CHECK(transport->batches[1][0].metadata.value()["service"] == "two");
   client->shutdown();
 
   auto bad = config();
@@ -158,7 +234,7 @@ void test_runtime_updates_and_validation() {
   } catch (const std::invalid_argument&) {
     threw = true;
   }
-  assert(threw);
+  CHECK(threw);
 }
 
 }  // namespace
@@ -166,9 +242,9 @@ void test_runtime_updates_and_validation() {
 int main() {
   test_wire_format();
   test_flush_drains_all_batches();
+  test_flush_waits_for_in_flight_send();
   test_retry_and_permanent_failure();
   test_queue_trim_and_scalar_metadata();
   test_runtime_updates_and_validation();
   return 0;
 }
-

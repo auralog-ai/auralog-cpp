@@ -1,7 +1,7 @@
+#include <algorithm>
 #include <auralog/auralog.hpp>
 #include <auralog/curl_transport.hpp>
-
-#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <iomanip>
@@ -22,7 +22,9 @@ bool is_error_or_above(LogLevel level) {
 
 }  // namespace
 
-std::string to_string(LogLevel level) {
+std::string to_string(LogLevel level) { return level_name(level); }
+
+std::string level_name(LogLevel level) {
   switch (level) {
     case LogLevel::Debug:
       return "debug";
@@ -39,7 +41,7 @@ std::string to_string(LogLevel level) {
 }
 
 nlohmann::json LogEntry::to_wire() const {
-  nlohmann::json out{{"level", to_string(level)},
+  nlohmann::json out{{"level", level_name(level)},
                      {"message", message},
                      {"environment", environment},
                      {"timestamp", timestamp},
@@ -73,8 +75,7 @@ std::shared_ptr<Client> Client::create(Config config, std::shared_ptr<Transport>
       config.shutdown_timeout.count() <= 0) {
     throw std::invalid_argument("auralog durations must be greater than zero");
   }
-  if (config.max_batch_size == 0 || config.max_queue_size == 0 ||
-      config.max_retry_attempts == 0) {
+  if (config.max_batch_size == 0 || config.max_queue_size == 0 || config.max_retry_attempts == 0) {
     throw std::invalid_argument("auralog queue and retry sizes must be greater than zero");
   }
   if (config.retry_max_delay < config.retry_initial_delay) {
@@ -84,8 +85,7 @@ std::shared_ptr<Client> Client::create(Config config, std::shared_ptr<Transport>
     config.trace_id = generate_trace_id();
   }
 
-  auto client =
-      std::shared_ptr<Client>(new Client(std::move(config), std::move(transport)));
+  auto client = std::shared_ptr<Client>(new Client(std::move(config), std::move(transport)));
   client->start_worker();
   if (client->config_.capture_terminate) {
     install_terminate_capture(client);
@@ -96,9 +96,7 @@ std::shared_ptr<Client> Client::create(Config config, std::shared_ptr<Transport>
 Client::Client(Config config, std::shared_ptr<Transport> transport)
     : config_(std::move(config)), transport_(std::move(transport)) {}
 
-Client::~Client() {
-  shutdown_for(std::chrono::milliseconds{250});
-}
+Client::~Client() { shutdown_for(config_.shutdown_timeout); }
 
 void Client::start_worker() {
   worker_ = std::thread([this] { worker_loop(); });
@@ -128,16 +126,17 @@ void Client::fatal(std::string message, nlohmann::json metadata,
 
 void Client::log(LogLevel level, std::string message, nlohmann::json metadata,
                  std::optional<std::string> stack_trace) {
-  enqueue(build_entry(level, std::move(message), std::move(metadata), std::move(stack_trace), true));
+  enqueue(
+      build_entry(level, std::move(message), std::move(metadata), std::move(stack_trace), true));
 }
 
-void Client::flush() {
-  flush_until_empty(std::nullopt);
+void Client::flush() { flush_for(config_.shutdown_timeout); }
+
+void Client::flush_for(std::chrono::milliseconds timeout) {
+  flush_until_empty(std::chrono::steady_clock::now() + timeout);
 }
 
-void Client::shutdown() {
-  shutdown_for(config_.shutdown_timeout);
-}
+void Client::shutdown() { shutdown_for(config_.shutdown_timeout); }
 
 void Client::shutdown_for(std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -185,9 +184,8 @@ void Client::worker_loop() {
   while (true) {
     {
       std::unique_lock<std::mutex> lock(mutex_);
-      cv_.wait_for(lock, config_.flush_interval, [this] {
-        return stopped_ || !single_queue_.empty();
-      });
+      cv_.wait_for(lock, config_.flush_interval,
+                   [this] { return stopped_ || !single_queue_.empty(); });
       if (stopped_) {
         worker_done_ = true;
         cv_.notify_all();
@@ -223,26 +221,45 @@ bool Client::flush_once() {
     } else {
       return true;
     }
+    ++in_flight_count_;
   }
 
   SendResult result = SendResult::Success;
-  if (single) {
-    result = transport_->send_single(entries.front().entry);
-  } else {
-    std::vector<LogEntry> batch;
-    batch.reserve(entries.size());
-    for (const auto& queued : entries) {
-      batch.push_back(queued.entry);
+  try {
+    if (single) {
+      result = transport_->send_single(entries.front().entry);
+    } else {
+      std::vector<LogEntry> batch;
+      batch.reserve(entries.size());
+      for (const auto& queued : entries) {
+        batch.push_back(queued.entry);
+      }
+      result = transport_->send_batch(batch);
     }
-    result = transport_->send_batch(batch);
+  } catch (const std::exception& ex) {
+    warn_once(std::string("auralog: transport failed: ") + ex.what());
+    result = SendResult::RetryableFailure;
+  } catch (...) {
+    warn_once("auralog: transport failed");
+    result = SendResult::RetryableFailure;
   }
 
   if (result == SendResult::RetryableFailure) {
     requeue_or_drop(std::move(entries), single);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      --in_flight_count_;
+      cv_.notify_all();
+    }
     return false;
   }
   if (result == SendResult::PermanentFailure) {
     warn_once("auralog: dropping logs after non-retryable delivery failure");
+  }
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    --in_flight_count_;
+    cv_.notify_all();
   }
   return true;
 }
@@ -254,9 +271,17 @@ void Client::flush_until_empty(std::optional<std::chrono::steady_clock::time_poi
       return;
     }
     {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!has_pending_locked()) {
+      std::unique_lock<std::mutex> lock(mutex_);
+      if (batch_queue_.empty() && single_queue_.empty() && in_flight_count_ == 0) {
         return;
+      }
+      if (batch_queue_.empty() && single_queue_.empty()) {
+        if (deadline.has_value()) {
+          cv_.wait_until(lock, *deadline, [this] { return in_flight_count_ == 0; });
+        } else {
+          cv_.wait(lock, [this] { return in_flight_count_ == 0; });
+        }
+        continue;
       }
     }
     const bool success = flush_once();
@@ -290,25 +315,29 @@ void Client::enqueue(LogEntry entry) {
 }
 
 void Client::requeue_or_drop(std::vector<QueuedEntry> entries, bool single) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
-    it->attempts += 1;
-    if (it->attempts >= config_.max_retry_attempts) {
-      warned_failure_ = true;
-      std::cerr << "auralog: dropping logs after retry attempts exhausted\n";
-      continue;
+  bool dropped = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+      it->attempts += 1;
+      if (it->attempts >= config_.max_retry_attempts) {
+        dropped = true;
+        continue;
+      }
+      if (single) {
+        single_queue_.push_front(std::move(*it));
+      } else {
+        batch_queue_.push_front(std::move(*it));
+      }
     }
-    if (single) {
-      single_queue_.push_front(std::move(*it));
-    } else {
-      batch_queue_.push_front(std::move(*it));
-    }
+  }
+  if (dropped) {
+    warn_once("auralog: dropping logs after retry attempts exhausted");
   }
 }
 
 LogEntry Client::build_entry(LogLevel level, std::string message, nlohmann::json metadata,
-                             std::optional<std::string> stack_trace,
-                             bool include_global_metadata) {
+                             std::optional<std::string> stack_trace, bool include_global_metadata) {
   return LogEntry{level,
                   std::move(message),
                   config_.environment,
@@ -357,15 +386,18 @@ nlohmann::json Client::merge_metadata(nlohmann::json metadata, bool include_glob
 }
 
 void Client::warn_once(const std::string& message) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (!warned_failure_) {
-    warned_failure_ = true;
+  bool should_warn = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    should_warn = warnings_.insert(message).second;
+  }
+  if (should_warn) {
     std::cerr << message << '\n';
   }
 }
 
 bool Client::has_pending_locked() const {
-  return !batch_queue_.empty() || !single_queue_.empty();
+  return !batch_queue_.empty() || !single_queue_.empty() || in_flight_count_ > 0;
 }
 
 std::shared_ptr<Client> init(Config config) {
@@ -412,15 +444,19 @@ std::string utc_timestamp_millis() {
 #else
   gmtime_r(&seconds, &tm);
 #endif
-  std::ostringstream out;
-  out << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S") << '.' << std::setw(3)
-      << std::setfill('0') << millis.count() << 'Z';
-  return out.str();
+  char out[25];
+  std::snprintf(out, sizeof(out), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", tm.tm_year + 1900,
+                tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+                static_cast<int>(millis.count()));
+  return out;
 }
 
 std::string generate_trace_id() {
-  std::random_device rd;
-  std::mt19937 gen(rd());
+  thread_local std::mt19937 gen([] {
+    std::random_device rd;
+    std::seed_seq seed{rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd()};
+    return std::mt19937(seed);
+  }());
   std::uniform_int_distribution<int> dist(0, 255);
   unsigned char bytes[16];
   for (auto& byte : bytes) {
