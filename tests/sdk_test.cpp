@@ -208,6 +208,57 @@ void test_queue_trim_and_scalar_metadata() {
   client2->shutdown();
 }
 
+class AlwaysRetryableTransport final : public auralog::Transport {
+ public:
+  auralog::SendResult send_batch(const std::vector<auralog::LogEntry>& entries) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    batch_attempts += entries.size();
+    return auralog::SendResult::RetryableFailure;
+  }
+
+  auralog::SendResult send_single(const auralog::LogEntry&) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++single_attempts;
+    return auralog::SendResult::RetryableFailure;
+  }
+
+  std::size_t batch_attempts = 0;
+  std::size_t single_attempts = 0;
+
+ private:
+  std::mutex mutex_;
+};
+
+void test_retry_exhaustion_drops_entries() {
+  auto transport = std::make_shared<AlwaysRetryableTransport>();
+  auto cfg = config();
+  cfg.max_retry_attempts = 3;
+  cfg.retry_initial_delay = 1ms;
+  cfg.retry_max_delay = 1ms;
+  auto client = auralog::Client::create(cfg, transport);
+  client->info("doomed", {{"index", 0}});
+  client->flush_for(1s);
+
+  CHECK(transport->batch_attempts == 3);
+  CHECK(transport->single_attempts == 0);
+  client->shutdown();
+}
+
+void test_supplier_exception_does_not_crash_logging() {
+  auto transport = std::make_shared<RecordingTransport>();
+  auto client = auralog::Client::create(config(), transport);
+  client->set_global_metadata_supplier([] {
+    throw std::runtime_error("supplier exploded");
+    return nlohmann::json::object();
+  });
+  client->info("survives", {{"order_id", "ord_1"}});
+  client->flush();
+
+  CHECK(transport->batches.size() == 1);
+  CHECK(transport->batches[0][0].metadata.value()["order_id"] == "ord_1");
+  client->shutdown();
+}
+
 void test_runtime_updates_and_validation() {
   auto transport = std::make_shared<RecordingTransport>();
   auto cfg = config();
@@ -244,6 +295,8 @@ int main() {
   test_flush_drains_all_batches();
   test_flush_waits_for_in_flight_send();
   test_retry_and_permanent_failure();
+  test_retry_exhaustion_drops_entries();
+  test_supplier_exception_does_not_crash_logging();
   test_queue_trim_and_scalar_metadata();
   test_runtime_updates_and_validation();
   return 0;

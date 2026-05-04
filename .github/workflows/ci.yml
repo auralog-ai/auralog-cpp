@@ -56,6 +56,27 @@ jobs:
       - name: Test
         run: ctest --test-dir build-sanitizer --output-on-failure
 
+  tsan:
+    name: tsan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+
+      - name: Configure
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DAURALOG_ENABLE_TSAN=ON
+
+      - name: Build
+        run: cmake --build build-tsan --parallel
+
+      - name: Test
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: ctest --test-dir build-tsan --output-on-failure
+
   windows:
     runs-on: windows-latest
 
