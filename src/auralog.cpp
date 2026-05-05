@@ -70,6 +70,11 @@ std::shared_ptr<Client> Client::create(Config config, std::shared_ptr<Transport>
   if (config.endpoint.empty()) {
     throw std::invalid_argument("auralog endpoint is required");
   }
+  if (!config.allow_insecure_endpoint && config.endpoint.rfind("https://", 0) != 0) {
+    throw std::invalid_argument(
+        "auralog endpoint must use https:// (set Config::allow_insecure_endpoint = true to "
+        "override)");
+  }
   if (config.flush_interval.count() <= 0 || config.retry_initial_delay.count() <= 0 ||
       config.retry_max_delay.count() <= 0 || config.http_timeout.count() <= 0 ||
       config.shutdown_timeout.count() <= 0) {

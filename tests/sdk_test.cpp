@@ -259,6 +259,31 @@ void test_supplier_exception_does_not_crash_logging() {
   client->shutdown();
 }
 
+void test_rejects_insecure_endpoint_by_default() {
+  auralog::Config insecure;
+  insecure.api_key = "k";
+  insecure.endpoint = "http://insecure";
+  bool threw = false;
+  try {
+    (void)auralog::Client::create(insecure, std::make_shared<RecordingTransport>());
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  CHECK(threw);
+
+  auralog::Config opt_out;
+  opt_out.api_key = "k";
+  opt_out.endpoint = "http://insecure";
+  opt_out.allow_insecure_endpoint = true;
+  opt_out.flush_interval = 1h;
+  opt_out.retry_initial_delay = 1ms;
+  opt_out.retry_max_delay = 1ms;
+  opt_out.shutdown_timeout = 100ms;
+  auto client = auralog::Client::create(opt_out, std::make_shared<RecordingTransport>());
+  CHECK(client != nullptr);
+  client->shutdown();
+}
+
 void test_runtime_updates_and_validation() {
   auto transport = std::make_shared<RecordingTransport>();
   auto cfg = config();
@@ -298,6 +323,7 @@ int main() {
   test_retry_exhaustion_drops_entries();
   test_supplier_exception_does_not_crash_logging();
   test_queue_trim_and_scalar_metadata();
+  test_rejects_insecure_endpoint_by_default();
   test_runtime_updates_and_validation();
   return 0;
 }

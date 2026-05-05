@@ -59,6 +59,7 @@ struct Config {
   std::optional<nlohmann::json> global_metadata;
   std::function<nlohmann::json()> global_metadata_supplier;
   bool capture_terminate = false;
+  bool allow_insecure_endpoint = false;
 };
 
 class Client : public std::enable_shared_from_this<Client> {
