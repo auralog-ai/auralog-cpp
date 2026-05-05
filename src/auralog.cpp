@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <auralog/auralog.hpp>
 #include <auralog/curl_transport.hpp>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -18,6 +19,39 @@ std::weak_ptr<Client> global_client;
 
 bool is_error_or_above(LogLevel level) {
   return level == LogLevel::Error || level == LogLevel::Fatal;
+}
+
+bool is_ascii_whitespace(unsigned char character) {
+  return character == ' ' || character == '\t' || character == '\n' || character == '\r' ||
+         character == '\v' || character == '\f';
+}
+
+void trim_in_place(std::string& value) {
+  std::size_t start = 0;
+  while (start < value.size() && is_ascii_whitespace(static_cast<unsigned char>(value[start]))) {
+    ++start;
+  }
+  std::size_t end = value.size();
+  while (end > start && is_ascii_whitespace(static_cast<unsigned char>(value[end - 1]))) {
+    --end;
+  }
+  value = value.substr(start, end - start);
+}
+
+bool starts_with_https_scheme(const std::string& endpoint) {
+  constexpr const char* scheme = "https://";
+  constexpr std::size_t scheme_length = 8;
+  if (endpoint.size() < scheme_length) {
+    return false;
+  }
+  for (std::size_t index = 0; index < scheme_length; ++index) {
+    const auto actual = static_cast<unsigned char>(endpoint[index]);
+    const auto expected = static_cast<unsigned char>(scheme[index]);
+    if (std::tolower(actual) != expected) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -69,6 +103,28 @@ std::shared_ptr<Client> Client::create(Config config, std::shared_ptr<Transport>
   }
   if (config.endpoint.empty()) {
     throw std::invalid_argument("auralog endpoint is required");
+  }
+  {
+    std::string trimmed = config.endpoint;
+    trim_in_place(trimmed);
+    if (trimmed.size() != config.endpoint.size()) {
+      throw std::invalid_argument(
+          "auralog endpoint must not contain leading or trailing whitespace");
+    }
+    if (trimmed.empty()) {
+      throw std::invalid_argument("auralog endpoint is required");
+    }
+    if (!config.allow_insecure_endpoint) {
+      if (!starts_with_https_scheme(trimmed)) {
+        throw std::invalid_argument(
+            "auralog endpoint must use https:// (set Config::allow_insecure_endpoint = true to "
+            "override)");
+      }
+      constexpr std::size_t scheme_length = 8;  // strlen("https://")
+      if (trimmed.size() <= scheme_length) {
+        throw std::invalid_argument("auralog endpoint must include a host after https://");
+      }
+    }
   }
   if (config.flush_interval.count() <= 0 || config.retry_initial_delay.count() <= 0 ||
       config.retry_max_delay.count() <= 0 || config.http_timeout.count() <= 0 ||

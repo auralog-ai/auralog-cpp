@@ -50,6 +50,7 @@ int main() {
 | `global_metadata` | none | Static metadata merged into every log |
 | `global_metadata_supplier` | none | Callable metadata supplier, invoked per log |
 | `capture_terminate` | `false` | Install `std::set_terminate` capture |
+| `allow_insecure_endpoint` | `false` | Permit non-`https://` endpoints. Off by default — `Client::create` throws `std::invalid_argument` for plaintext endpoints unless this is set |
 
 ## Transport Semantics
 
