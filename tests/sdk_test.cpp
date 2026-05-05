@@ -5,7 +5,9 @@
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -259,20 +261,70 @@ void test_supplier_exception_does_not_crash_logging() {
   client->shutdown();
 }
 
+// Captures the message of a std::invalid_argument thrown by `action`. Returns
+// an empty optional if no exception (or a different exception) was thrown. The
+// previous bool-only pattern would have masked a regression that caused
+// Client::create to throw on an unrelated condition.
+template <typename Action>
+std::optional<std::string> capture_invalid_argument(Action&& action) {
+  try {
+    action();
+  } catch (const std::invalid_argument& error) {
+    return std::string(error.what());
+  } catch (...) {
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+bool message_contains(const std::optional<std::string>& message, const std::string& needle) {
+  return message.has_value() && message->find(needle) != std::string::npos;
+}
+
 void test_rejects_insecure_endpoint_by_default() {
   auralog::Config insecure;
   insecure.api_key = "k";
+  insecure.environment = "test";
   insecure.endpoint = "http://insecure";
-  bool threw = false;
-  try {
-    (void)auralog::Client::create(insecure, std::make_shared<RecordingTransport>());
-  } catch (const std::invalid_argument&) {
-    threw = true;
-  }
-  CHECK(threw);
+  auto insecure_message = capture_invalid_argument(
+      [&] { (void)auralog::Client::create(insecure, std::make_shared<RecordingTransport>()); });
+  CHECK(message_contains(insecure_message, "https://"));
+
+  // Case-insensitive scheme check per RFC 3986 §3.1: HTTPS:// must be accepted.
+  auralog::Config mixed_case;
+  mixed_case.api_key = "k";
+  mixed_case.environment = "test";
+  mixed_case.endpoint = "HTTPS://example.com";
+  mixed_case.flush_interval = 1h;
+  mixed_case.retry_initial_delay = 1ms;
+  mixed_case.retry_max_delay = 1ms;
+  mixed_case.shutdown_timeout = 100ms;
+  auto mixed_case_client =
+      auralog::Client::create(mixed_case, std::make_shared<RecordingTransport>());
+  CHECK(mixed_case_client != nullptr);
+  mixed_case_client->shutdown();
+
+  // "https://" with no host must be rejected before reaching libcurl.
+  auralog::Config no_host;
+  no_host.api_key = "k";
+  no_host.environment = "test";
+  no_host.endpoint = "https://";
+  auto no_host_message = capture_invalid_argument(
+      [&] { (void)auralog::Client::create(no_host, std::make_shared<RecordingTransport>()); });
+  CHECK(message_contains(no_host_message, "host"));
+
+  // Leading / trailing whitespace must be rejected.
+  auralog::Config padded;
+  padded.api_key = "k";
+  padded.environment = "test";
+  padded.endpoint = "  https://example.com  ";
+  auto padded_message = capture_invalid_argument(
+      [&] { (void)auralog::Client::create(padded, std::make_shared<RecordingTransport>()); });
+  CHECK(message_contains(padded_message, "whitespace"));
 
   auralog::Config opt_out;
   opt_out.api_key = "k";
+  opt_out.environment = "test";
   opt_out.endpoint = "http://insecure";
   opt_out.allow_insecure_endpoint = true;
   opt_out.flush_interval = 1h;
@@ -282,6 +334,19 @@ void test_rejects_insecure_endpoint_by_default() {
   auto client = auralog::Client::create(opt_out, std::make_shared<RecordingTransport>());
   CHECK(client != nullptr);
   client->shutdown();
+}
+
+// Exercises the single-arg Client::create(Config) overload, which builds a
+// real CurlTransport. The two-arg overload above already covers the validation
+// logic, but the single-arg path was previously uncovered for endpoint
+// validation.
+void test_single_arg_create_validates_endpoint() {
+  auralog::Config insecure;
+  insecure.api_key = "k";
+  insecure.environment = "test";
+  insecure.endpoint = "http://insecure";
+  auto message = capture_invalid_argument([&] { (void)auralog::Client::create(insecure); });
+  CHECK(message_contains(message, "https://"));
 }
 
 void test_runtime_updates_and_validation() {
@@ -324,6 +389,7 @@ int main() {
   test_supplier_exception_does_not_crash_logging();
   test_queue_trim_and_scalar_metadata();
   test_rejects_insecure_endpoint_by_default();
+  test_single_arg_create_validates_endpoint();
   test_runtime_updates_and_validation();
   return 0;
 }
