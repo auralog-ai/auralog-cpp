@@ -38,6 +38,15 @@ target_include_directories(auralog
 )
 target_link_libraries(auralog PUBLIC nlohmann_json::nlohmann_json CURL::libcurl)
 
+# On Windows, libcurl transitively includes <windows.h>, which defines
+# `min` and `max` as macros and breaks `std::min(...)` / `std::max(...)`
+# call sites with C2589/C2059. Defining NOMINMAX project-wide
+# suppresses those macros. PUBLIC so consumers of auralog::auralog
+# inherit the definition and avoid the same trap.
+if(WIN32)
+  target_compile_definitions(auralog PUBLIC NOMINMAX)
+endif()
+
 if(AURALOG_ENABLE_SANITIZERS)
   if(MSVC)
     message(FATAL_ERROR "AURALOG_ENABLE_SANITIZERS is not supported with MSVC")
