@@ -20,7 +20,7 @@ fi
 mkdir -p "$ROOT/build/local"
 clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
   -I"$ROOT/include" -I"$DEPS" \
-  "$ROOT/src/auralog.cpp" \
+  "$ROOT/src/auralogs.cpp" \
   "$ROOT/src/curl_transport.cpp" \
   "$ROOT/src/terminate_capture.cpp" \
   "$ROOT/tests/sdk_test.cpp" \

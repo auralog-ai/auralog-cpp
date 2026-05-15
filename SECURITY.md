@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you think you've found a security issue in the Auralog C++ SDK, please **do not open a public issue**.
+If you think you've found a security issue in the Auralogs C++ SDK, please **do not open a public issue**.
 
 Instead, email [james.c.e.thomas@gmail.com](mailto:james.c.e.thomas@gmail.com) with:
 
@@ -14,5 +14,5 @@ You'll get an acknowledgement within a few business days. Once triaged, we'll co
 
 ## Scope
 
-This policy covers the `auralog-cpp` SDK published from this repository.
+This policy covers the `auralogs-cpp` SDK published from this repository.
 

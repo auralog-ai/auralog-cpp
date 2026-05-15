@@ -1,5 +1,5 @@
 #include <atomic>
-#include <auralog/auralog.hpp>
+#include <auralogs/auralogs.hpp>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -23,48 +23,48 @@ namespace {
     }                                                                                    \
   } while (false)
 
-class RecordingTransport final : public auralog::Transport {
+class RecordingTransport final : public auralogs::Transport {
  public:
-  explicit RecordingTransport(std::vector<auralog::SendResult> results = {})
+  explicit RecordingTransport(std::vector<auralogs::SendResult> results = {})
       : results_(std::move(results)) {}
 
-  auralog::SendResult send_batch(const std::vector<auralog::LogEntry>& entries) override {
+  auralogs::SendResult send_batch(const std::vector<auralogs::LogEntry>& entries) override {
     std::lock_guard<std::mutex> lock(mutex_);
     batches.push_back(entries);
     return next_result();
   }
 
-  auralog::SendResult send_single(const auralog::LogEntry& entry) override {
+  auralogs::SendResult send_single(const auralogs::LogEntry& entry) override {
     std::lock_guard<std::mutex> lock(mutex_);
     singles.push_back(entry);
     return next_result();
   }
 
-  std::vector<std::vector<auralog::LogEntry>> batches;
-  std::vector<auralog::LogEntry> singles;
+  std::vector<std::vector<auralogs::LogEntry>> batches;
+  std::vector<auralogs::LogEntry> singles;
 
  private:
-  auralog::SendResult next_result() {
+  auralogs::SendResult next_result() {
     if (result_index_ >= results_.size()) {
-      return auralog::SendResult::Success;
+      return auralogs::SendResult::Success;
     }
     return results_[result_index_++];
   }
 
   std::mutex mutex_;
-  std::vector<auralog::SendResult> results_;
+  std::vector<auralogs::SendResult> results_;
   std::size_t result_index_ = 0;
 };
 
-class BlockingTransport final : public auralog::Transport {
+class BlockingTransport final : public auralogs::Transport {
  public:
-  auralog::SendResult send_batch(const std::vector<auralog::LogEntry>& entries) override {
+  auralogs::SendResult send_batch(const std::vector<auralogs::LogEntry>& entries) override {
     std::lock_guard<std::mutex> lock(mutex_);
     batches.push_back(entries);
-    return auralog::SendResult::Success;
+    return auralogs::SendResult::Success;
   }
 
-  auralog::SendResult send_single(const auralog::LogEntry& entry) override {
+  auralogs::SendResult send_single(const auralogs::LogEntry& entry) override {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       singles.push_back(entry);
@@ -74,7 +74,7 @@ class BlockingTransport final : public auralog::Transport {
 
     std::unique_lock<std::mutex> lock(mutex_);
     cv.wait(lock, [this] { return release; });
-    return auralog::SendResult::Success;
+    return auralogs::SendResult::Success;
   }
 
   void wait_until_entered() {
@@ -90,8 +90,8 @@ class BlockingTransport final : public auralog::Transport {
     cv.notify_all();
   }
 
-  std::vector<std::vector<auralog::LogEntry>> batches;
-  std::vector<auralog::LogEntry> singles;
+  std::vector<std::vector<auralogs::LogEntry>> batches;
+  std::vector<auralogs::LogEntry> singles;
 
  private:
   std::mutex mutex_;
@@ -100,8 +100,8 @@ class BlockingTransport final : public auralog::Transport {
   bool release = false;
 };
 
-auralog::Config config() {
-  auralog::Config cfg;
+auralogs::Config config() {
+  auralogs::Config cfg;
   cfg.api_key = "aura_test";
   cfg.environment = "test";
   cfg.flush_interval = 1h;
@@ -113,7 +113,7 @@ auralog::Config config() {
 
 void test_wire_format() {
   auto transport = std::make_shared<RecordingTransport>();
-  auto client = auralog::Client::create(config(), transport);
+  auto client = auralogs::Client::create(config(), transport);
   client->set_global_metadata({{{"service", "checkout"}}});
   client->info("started", {{"order_id", "ord_1"}});
   client->error("failed", {{"reason", "declined"}});
@@ -134,7 +134,7 @@ void test_flush_drains_all_batches() {
   auto transport = std::make_shared<RecordingTransport>();
   auto cfg = config();
   cfg.max_batch_size = 50;
-  auto client = auralog::Client::create(cfg, transport);
+  auto client = auralogs::Client::create(cfg, transport);
   for (int i = 0; i < 120; ++i) {
     client->info("bulk", {{"index", i}});
   }
@@ -152,7 +152,7 @@ void test_flush_waits_for_in_flight_send() {
   auto transport = std::make_shared<BlockingTransport>();
   auto cfg = config();
   cfg.shutdown_timeout = 1s;
-  auto client = auralog::Client::create(cfg, transport);
+  auto client = auralogs::Client::create(cfg, transport);
   client->error("in flight", {});
   transport->wait_until_entered();
 
@@ -171,17 +171,17 @@ void test_flush_waits_for_in_flight_send() {
 }
 
 void test_retry_and_permanent_failure() {
-  auto retrying = std::make_shared<RecordingTransport>(std::vector<auralog::SendResult>{
-      auralog::SendResult::RetryableFailure, auralog::SendResult::Success});
-  auto client = auralog::Client::create(config(), retrying);
+  auto retrying = std::make_shared<RecordingTransport>(std::vector<auralogs::SendResult>{
+      auralogs::SendResult::RetryableFailure, auralogs::SendResult::Success});
+  auto client = auralogs::Client::create(config(), retrying);
   client->info("retry", {});
   client->flush();
   CHECK(retrying->batches.size() == 2);
   client->shutdown();
 
   auto permanent = std::make_shared<RecordingTransport>(
-      std::vector<auralog::SendResult>{auralog::SendResult::PermanentFailure});
-  auto client2 = auralog::Client::create(config(), permanent);
+      std::vector<auralogs::SendResult>{auralogs::SendResult::PermanentFailure});
+  auto client2 = auralogs::Client::create(config(), permanent);
   client2->error("bad auth", {});
   client2->flush();
   CHECK(permanent->singles.size() == 1);
@@ -192,7 +192,7 @@ void test_queue_trim_and_scalar_metadata() {
   auto transport = std::make_shared<RecordingTransport>();
   auto cfg = config();
   cfg.max_queue_size = 2;
-  auto client = auralog::Client::create(cfg, transport);
+  auto client = auralogs::Client::create(cfg, transport);
   for (int i = 0; i < 5; ++i) {
     client->info("trim", {{"index", i}});
   }
@@ -202,7 +202,7 @@ void test_queue_trim_and_scalar_metadata() {
   CHECK(transport->batches[0][1].metadata.value()["index"] == 4);
 
   auto transport2 = std::make_shared<RecordingTransport>();
-  auto client2 = auralog::Client::create(config(), transport2);
+  auto client2 = auralogs::Client::create(config(), transport2);
   client2->info("scalar", "hello");
   client2->flush();
   CHECK(transport2->batches[0][0].metadata.value()["value"] == "hello");
@@ -210,18 +210,18 @@ void test_queue_trim_and_scalar_metadata() {
   client2->shutdown();
 }
 
-class AlwaysRetryableTransport final : public auralog::Transport {
+class AlwaysRetryableTransport final : public auralogs::Transport {
  public:
-  auralog::SendResult send_batch(const std::vector<auralog::LogEntry>& entries) override {
+  auralogs::SendResult send_batch(const std::vector<auralogs::LogEntry>& entries) override {
     std::lock_guard<std::mutex> lock(mutex_);
     batch_attempts += entries.size();
-    return auralog::SendResult::RetryableFailure;
+    return auralogs::SendResult::RetryableFailure;
   }
 
-  auralog::SendResult send_single(const auralog::LogEntry&) override {
+  auralogs::SendResult send_single(const auralogs::LogEntry&) override {
     std::lock_guard<std::mutex> lock(mutex_);
     ++single_attempts;
-    return auralog::SendResult::RetryableFailure;
+    return auralogs::SendResult::RetryableFailure;
   }
 
   std::size_t batch_attempts = 0;
@@ -237,7 +237,7 @@ void test_retry_exhaustion_drops_entries() {
   cfg.max_retry_attempts = 3;
   cfg.retry_initial_delay = 1ms;
   cfg.retry_max_delay = 1ms;
-  auto client = auralog::Client::create(cfg, transport);
+  auto client = auralogs::Client::create(cfg, transport);
   client->info("doomed", {{"index", 0}});
   client->flush_for(1s);
 
@@ -248,7 +248,7 @@ void test_retry_exhaustion_drops_entries() {
 
 void test_supplier_exception_does_not_crash_logging() {
   auto transport = std::make_shared<RecordingTransport>();
-  auto client = auralog::Client::create(config(), transport);
+  auto client = auralogs::Client::create(config(), transport);
   client->set_global_metadata_supplier([] {
     throw std::runtime_error("supplier exploded");
     return nlohmann::json::object();
@@ -282,16 +282,16 @@ bool message_contains(const std::optional<std::string>& message, const std::stri
 }
 
 void test_rejects_insecure_endpoint_by_default() {
-  auralog::Config insecure;
+  auralogs::Config insecure;
   insecure.api_key = "k";
   insecure.environment = "test";
   insecure.endpoint = "http://insecure";
   auto insecure_message = capture_invalid_argument(
-      [&] { (void)auralog::Client::create(insecure, std::make_shared<RecordingTransport>()); });
+      [&] { (void)auralogs::Client::create(insecure, std::make_shared<RecordingTransport>()); });
   CHECK(message_contains(insecure_message, "https://"));
 
   // Case-insensitive scheme check per RFC 3986 §3.1: HTTPS:// must be accepted.
-  auralog::Config mixed_case;
+  auralogs::Config mixed_case;
   mixed_case.api_key = "k";
   mixed_case.environment = "test";
   mixed_case.endpoint = "HTTPS://example.com";
@@ -300,29 +300,29 @@ void test_rejects_insecure_endpoint_by_default() {
   mixed_case.retry_max_delay = 1ms;
   mixed_case.shutdown_timeout = 100ms;
   auto mixed_case_client =
-      auralog::Client::create(mixed_case, std::make_shared<RecordingTransport>());
+      auralogs::Client::create(mixed_case, std::make_shared<RecordingTransport>());
   CHECK(mixed_case_client != nullptr);
   mixed_case_client->shutdown();
 
   // "https://" with no host must be rejected before reaching libcurl.
-  auralog::Config no_host;
+  auralogs::Config no_host;
   no_host.api_key = "k";
   no_host.environment = "test";
   no_host.endpoint = "https://";
   auto no_host_message = capture_invalid_argument(
-      [&] { (void)auralog::Client::create(no_host, std::make_shared<RecordingTransport>()); });
+      [&] { (void)auralogs::Client::create(no_host, std::make_shared<RecordingTransport>()); });
   CHECK(message_contains(no_host_message, "host"));
 
   // Leading / trailing whitespace must be rejected.
-  auralog::Config padded;
+  auralogs::Config padded;
   padded.api_key = "k";
   padded.environment = "test";
   padded.endpoint = "  https://example.com  ";
   auto padded_message = capture_invalid_argument(
-      [&] { (void)auralog::Client::create(padded, std::make_shared<RecordingTransport>()); });
+      [&] { (void)auralogs::Client::create(padded, std::make_shared<RecordingTransport>()); });
   CHECK(message_contains(padded_message, "whitespace"));
 
-  auralog::Config opt_out;
+  auralogs::Config opt_out;
   opt_out.api_key = "k";
   opt_out.environment = "test";
   opt_out.endpoint = "http://insecure";
@@ -331,7 +331,7 @@ void test_rejects_insecure_endpoint_by_default() {
   opt_out.retry_initial_delay = 1ms;
   opt_out.retry_max_delay = 1ms;
   opt_out.shutdown_timeout = 100ms;
-  auto client = auralog::Client::create(opt_out, std::make_shared<RecordingTransport>());
+  auto client = auralogs::Client::create(opt_out, std::make_shared<RecordingTransport>());
   CHECK(client != nullptr);
   client->shutdown();
 }
@@ -341,11 +341,11 @@ void test_rejects_insecure_endpoint_by_default() {
 // logic, but the single-arg path was previously uncovered for endpoint
 // validation.
 void test_single_arg_create_validates_endpoint() {
-  auralog::Config insecure;
+  auralogs::Config insecure;
   insecure.api_key = "k";
   insecure.environment = "test";
   insecure.endpoint = "http://insecure";
-  auto message = capture_invalid_argument([&] { (void)auralog::Client::create(insecure); });
+  auto message = capture_invalid_argument([&] { (void)auralogs::Client::create(insecure); });
   CHECK(message_contains(message, "https://"));
 }
 
@@ -354,7 +354,7 @@ void test_runtime_updates_and_validation() {
   auto cfg = config();
   cfg.max_batch_size = 1;
   cfg.trace_id = "trace-one";
-  auto client = auralog::Client::create(cfg, transport);
+  auto client = auralogs::Client::create(cfg, transport);
   client->set_global_metadata({{{"service", "one"}}});
   client->info("first", {});
   client->set_trace_id("trace-two");
@@ -371,7 +371,7 @@ void test_runtime_updates_and_validation() {
   bad.flush_interval = 0ms;
   bool threw = false;
   try {
-    (void)auralog::Client::create(bad, std::make_shared<RecordingTransport>());
+    (void)auralogs::Client::create(bad, std::make_shared<RecordingTransport>());
   } catch (const std::invalid_argument&) {
     threw = true;
   }

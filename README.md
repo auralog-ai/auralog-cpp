@@ -1,8 +1,8 @@
-# auralog-cpp (Beta)
+# auralogs-cpp (Beta)
 
-C++ SDK for [Auralog](https://auralog.ai) — agentic logging and application awareness.
+C++ SDK for [Auralogs](https://auralogs.ai) — agentic logging and application awareness.
 
-Auralog uses Claude as an on-call engineer: it monitors your logs and errors, alerts you when something's wrong, and opens fix PRs automatically.
+Auralogs uses Claude as an on-call engineer: it monitors your logs and errors, alerts you when something's wrong, and opens fix PRs automatically.
 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
@@ -16,15 +16,15 @@ Auralog uses Claude as an on-call engineer: it monitors your logs and errors, al
 ## Quick Start
 
 ```cpp
-#include <auralog/auralog.hpp>
+#include <auralogs/auralogs.hpp>
 
 int main() {
-  auralog::Config config;
+  auralogs::Config config;
   const char* api_key = std::getenv("AURALOG_API_KEY");
   config.api_key = api_key != nullptr ? api_key : "aura_your_key";
   config.environment = "production";
 
-  auto client = auralog::init(config);
+  auto client = auralogs::init(config);
   client->info("user signed in", {{"user_id", "123"}});
   client->error("payment failed", {{"order_id", "abc"}});
   client->shutdown();
@@ -35,9 +35,9 @@ int main() {
 
 | Option | Default | Description |
 |---|---:|---|
-| `api_key` | required | Auralog project API key |
+| `api_key` | required | Auralogs project API key |
 | `environment` | `production` | Environment label |
-| `endpoint` | `https://ingest.auralog.ai` | Ingest endpoint |
+| `endpoint` | `https://ingest.auralogs.ai` | Ingest endpoint |
 | `flush_interval` | `5000ms` | Time between automatic background flushes |
 | `max_batch_size` | `50` | Maximum entries per `/v1/logs` request |
 | `max_queue_size` | `1000` | Maximum pending entries before dropping oldest |
@@ -64,8 +64,8 @@ int main() {
 - libcurl connect/request timeout bounds in-flight network work. If shutdown starts while the
   worker is inside libcurl, elapsed shutdown time can include up to one `http_timeout`.
 - Destructor cleanup is best-effort; call `shutdown()` in short-lived programs.
-- `auralog::init(config)` throws if a global client is already initialized.
-- The project API key is sent in the JSON body as `projectApiKey`, matching the other Auralog
+- `auralogs::init(config)` throws if a global client is already initialized.
+- The project API key is sent in the JSON body as `projectApiKey`, matching the other Auralogs
   SDKs and ingest wire format.
 
 ## Metadata
@@ -98,7 +98,7 @@ visibility/export annotations in their integration until a shared-library packag
 
 ## Documentation
 
-Full docs at [docs.auralog.ai](https://docs.auralog.ai).
+Full docs at [docs.auralogs.ai](https://docs.auralogs.ai).
 
 ## Security
 

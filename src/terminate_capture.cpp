@@ -1,18 +1,18 @@
-#include <auralog/auralog.hpp>
+#include <auralogs/auralogs.hpp>
 #include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <memory>
 #include <mutex>
 
-namespace auralog {
+namespace auralogs {
 namespace {
 
 std::mutex terminate_mutex;
 std::weak_ptr<Client> terminate_client;
 std::terminate_handler previous_handler = nullptr;
 
-void auralog_terminate_handler() {
+void auralogs_terminate_handler() {
   if (auto client = terminate_client.lock()) {
     client->fatal("process terminated", {{"source", "cpp_terminate"}});
     client->shutdown_for(std::chrono::milliseconds{1000});
@@ -29,8 +29,8 @@ void install_terminate_capture(std::shared_ptr<Client> client) {
   std::lock_guard<std::mutex> lock(terminate_mutex);
   terminate_client = std::move(client);
   if (previous_handler == nullptr) {
-    previous_handler = std::set_terminate(auralog_terminate_handler);
+    previous_handler = std::set_terminate(auralogs_terminate_handler);
   }
 }
 
-}  // namespace auralog
+}  // namespace auralogs

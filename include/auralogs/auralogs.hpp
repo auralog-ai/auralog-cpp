@@ -15,7 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace auralog {
+namespace auralogs {
 
 enum class LogLevel { Debug, Info, Warn, Error, Fatal };
 
@@ -46,7 +46,7 @@ class Transport {
 struct Config {
   std::string api_key;
   std::string environment = "production";
-  std::string endpoint = "https://ingest.auralog.ai";
+  std::string endpoint = "https://ingest.auralogs.ai";
   std::chrono::milliseconds flush_interval{5000};
   std::size_t max_batch_size = 50;
   std::size_t max_queue_size = 1000;
@@ -135,4 +135,4 @@ void install_terminate_capture(std::shared_ptr<Client> client);
 std::string utc_timestamp_millis();
 std::string generate_trace_id();
 
-}  // namespace auralog
+}  // namespace auralogs

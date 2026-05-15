@@ -2,9 +2,9 @@
 
 #include <curl/curl.h>
 
-#include <auralog/auralog.hpp>
+#include <auralogs/auralogs.hpp>
 
-namespace auralog {
+namespace auralogs {
 
 class CurlTransport final : public Transport {
  public:
@@ -25,4 +25,4 @@ class CurlTransport final : public Transport {
   std::mutex mutex_;
 };
 
-}  // namespace auralog
+}  // namespace auralogs

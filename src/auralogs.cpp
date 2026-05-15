@@ -1,6 +1,6 @@
 #include <algorithm>
-#include <auralog/auralog.hpp>
-#include <auralog/curl_transport.hpp>
+#include <auralogs/auralogs.hpp>
+#include <auralogs/curl_transport.hpp>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -11,7 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace auralog {
+namespace auralogs {
 namespace {
 
 std::mutex global_mutex;
@@ -96,46 +96,46 @@ std::shared_ptr<Client> Client::create(Config config) {
 
 std::shared_ptr<Client> Client::create(Config config, std::shared_ptr<Transport> transport) {
   if (config.api_key.empty()) {
-    throw std::invalid_argument("auralog api_key is required");
+    throw std::invalid_argument("auralogs api_key is required");
   }
   if (config.environment.empty()) {
-    throw std::invalid_argument("auralog environment is required");
+    throw std::invalid_argument("auralogs environment is required");
   }
   if (config.endpoint.empty()) {
-    throw std::invalid_argument("auralog endpoint is required");
+    throw std::invalid_argument("auralogs endpoint is required");
   }
   {
     std::string trimmed = config.endpoint;
     trim_in_place(trimmed);
     if (trimmed.size() != config.endpoint.size()) {
       throw std::invalid_argument(
-          "auralog endpoint must not contain leading or trailing whitespace");
+          "auralogs endpoint must not contain leading or trailing whitespace");
     }
     if (trimmed.empty()) {
-      throw std::invalid_argument("auralog endpoint is required");
+      throw std::invalid_argument("auralogs endpoint is required");
     }
     if (!config.allow_insecure_endpoint) {
       if (!starts_with_https_scheme(trimmed)) {
         throw std::invalid_argument(
-            "auralog endpoint must use https:// (set Config::allow_insecure_endpoint = true to "
+            "auralogs endpoint must use https:// (set Config::allow_insecure_endpoint = true to "
             "override)");
       }
       constexpr std::size_t scheme_length = 8;  // strlen("https://")
       if (trimmed.size() <= scheme_length) {
-        throw std::invalid_argument("auralog endpoint must include a host after https://");
+        throw std::invalid_argument("auralogs endpoint must include a host after https://");
       }
     }
   }
   if (config.flush_interval.count() <= 0 || config.retry_initial_delay.count() <= 0 ||
       config.retry_max_delay.count() <= 0 || config.http_timeout.count() <= 0 ||
       config.shutdown_timeout.count() <= 0) {
-    throw std::invalid_argument("auralog durations must be greater than zero");
+    throw std::invalid_argument("auralogs durations must be greater than zero");
   }
   if (config.max_batch_size == 0 || config.max_queue_size == 0 || config.max_retry_attempts == 0) {
-    throw std::invalid_argument("auralog queue and retry sizes must be greater than zero");
+    throw std::invalid_argument("auralogs queue and retry sizes must be greater than zero");
   }
   if (config.retry_max_delay < config.retry_initial_delay) {
-    throw std::invalid_argument("auralog retry_max_delay must be >= retry_initial_delay");
+    throw std::invalid_argument("auralogs retry_max_delay must be >= retry_initial_delay");
   }
   if (!config.trace_id.has_value()) {
     config.trace_id = generate_trace_id();
@@ -208,7 +208,7 @@ void Client::shutdown_for(std::chrono::milliseconds timeout) {
     if (done) {
       worker_.join();
     } else {
-      warn_once("auralog: worker did not stop before shutdown timeout; waiting for in-flight work");
+      warn_once("auralogs: worker did not stop before shutdown timeout; waiting for in-flight work");
       worker_.join();
     }
   }
@@ -293,10 +293,10 @@ bool Client::flush_once() {
       result = transport_->send_batch(batch);
     }
   } catch (const std::exception& ex) {
-    warn_once(std::string("auralog: transport failed: ") + ex.what());
+    warn_once(std::string("auralogs: transport failed: ") + ex.what());
     result = SendResult::RetryableFailure;
   } catch (...) {
-    warn_once("auralog: transport failed");
+    warn_once("auralogs: transport failed");
     result = SendResult::RetryableFailure;
   }
 
@@ -310,7 +310,7 @@ bool Client::flush_once() {
     return false;
   }
   if (result == SendResult::PermanentFailure) {
-    warn_once("auralog: dropping logs after non-retryable delivery failure");
+    warn_once("auralogs: dropping logs after non-retryable delivery failure");
   }
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -323,7 +323,7 @@ bool Client::flush_once() {
 void Client::flush_until_empty(std::optional<std::chrono::steady_clock::time_point> deadline) {
   while (true) {
     if (deadline.has_value() && std::chrono::steady_clock::now() >= *deadline) {
-      warn_once("auralog: flush timed out with pending logs");
+      warn_once("auralogs: flush timed out with pending logs");
       return;
     }
     {
@@ -344,7 +344,7 @@ void Client::flush_until_empty(std::optional<std::chrono::steady_clock::time_poi
     if (!success) {
       if (deadline.has_value() &&
           std::chrono::steady_clock::now() + config_.retry_initial_delay > *deadline) {
-        warn_once("auralog: retry budget exceeded during flush");
+        warn_once("auralogs: retry budget exceeded during flush");
         return;
       }
       std::this_thread::sleep_for(config_.retry_initial_delay);
@@ -388,7 +388,7 @@ void Client::requeue_or_drop(std::vector<QueuedEntry> entries, bool single) {
     }
   }
   if (dropped) {
-    warn_once("auralog: dropping logs after retry attempts exhausted");
+    warn_once("auralogs: dropping logs after retry attempts exhausted");
   }
 }
 
@@ -423,9 +423,9 @@ nlohmann::json Client::merge_metadata(nlohmann::json metadata, bool include_glob
           out.update(supplied);
         }
       } catch (const std::exception& ex) {
-        warn_once(std::string("auralog: global metadata supplier failed: ") + ex.what());
+        warn_once(std::string("auralogs: global metadata supplier failed: ") + ex.what());
       } catch (...) {
-        warn_once("auralog: global metadata supplier failed");
+        warn_once("auralogs: global metadata supplier failed");
       }
     }
   }
@@ -460,7 +460,7 @@ std::shared_ptr<Client> init(Config config) {
   auto client = Client::create(std::move(config));
   std::lock_guard<std::mutex> lock(global_mutex);
   if (!global_client.expired()) {
-    throw std::runtime_error("auralog global client is already initialized");
+    throw std::runtime_error("auralogs global client is already initialized");
   }
   global_client = client;
   return client;
@@ -532,4 +532,4 @@ std::string generate_trace_id() {
   return out.str();
 }
 
-}  // namespace auralog
+}  // namespace auralogs

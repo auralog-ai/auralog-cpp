@@ -1,11 +1,11 @@
 #include <curl/curl.h>
 
 #include <algorithm>
-#include <auralog/curl_transport.hpp>
+#include <auralogs/curl_transport.hpp>
 #include <iostream>
 #include <mutex>
 
-namespace auralog {
+namespace auralogs {
 namespace {
 
 std::once_flag curl_init_once;
@@ -71,18 +71,18 @@ SendResult CurlTransport::post_json(const std::string& path, const nlohmann::jso
   curl_slist_free_all(headers);
 
   if (code != CURLE_OK) {
-    std::cerr << "auralog: libcurl delivery failure: " << curl_easy_strerror(code) << '\n';
+    std::cerr << "auralogs: libcurl delivery failure: " << curl_easy_strerror(code) << '\n';
     return SendResult::RetryableFailure;
   }
   if (status >= 200 && status < 300) {
     return SendResult::Success;
   }
   if (status >= 400 && status < 500) {
-    std::cerr << "auralog: non-retryable HTTP " << status << " from ingest\n";
+    std::cerr << "auralogs: non-retryable HTTP " << status << " from ingest\n";
     return SendResult::PermanentFailure;
   }
-  std::cerr << "auralog: retryable HTTP " << status << " from ingest\n";
+  std::cerr << "auralogs: retryable HTTP " << status << " from ingest\n";
   return SendResult::RetryableFailure;
 }
 
-}  // namespace auralog
+}  // namespace auralogs
