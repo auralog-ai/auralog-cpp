@@ -19,9 +19,9 @@ jobs:
 
       - run: ctest --test-dir build --output-on-failure
 
-      - run: tar --exclude='./build' --exclude='./.git' -czf auralogs-cpp.tar.gz .
+      - run: git archive --format=tar.gz --prefix=auralogs-cpp-/ -o auralogs-cpp-.tar.gz HEAD
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: auralogs-cpp.tar.gz
+          files: auralogs-cpp-${{ github.ref_name }}.tar.gz
 
