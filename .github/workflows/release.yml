@@ -21,7 +21,7 @@ jobs:
 
       - run: git archive --format=tar.gz --prefix=auralogs-cpp-${GITHUB_REF_NAME}/ -o auralogs-cpp-${GITHUB_REF_NAME}.tar.gz HEAD
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: auralogs-cpp-${{ github.ref_name }}.tar.gz
 
