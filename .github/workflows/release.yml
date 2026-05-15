@@ -19,7 +19,7 @@ jobs:
 
       - run: ctest --test-dir build --output-on-failure
 
-      - run: git archive --format=tar.gz --prefix=auralogs-cpp-/ -o auralogs-cpp-.tar.gz HEAD
+      - run: git archive --format=tar.gz --prefix=auralogs-cpp-${GITHUB_REF_NAME}/ -o auralogs-cpp-${GITHUB_REF_NAME}.tar.gz HEAD
 
       - uses: softprops/action-gh-release@v2
         with:
